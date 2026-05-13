@@ -102,12 +102,12 @@
         <div v-if="showPopup" class="popup-overlay" @click.self="closePopup">
           <div class="popup-card">
             <div class="popup-star">✨</div>
-            <h2 class="popup-title">Parabéns!</h2>
-            <p class="popup-sub">Você alcançou <strong>{{ popupTarget }}</strong>!</p>
+            <h2 class="popup-title">Novo marco desbloqueado! 🎉</h2>
+            <p class="popup-sub">Você alcançou <strong>{{ mountNumber(popupTarget).val }}</strong> e o próximo objetivo é <strong>{{ mountNumber(nextObjective).val }}</strong>.</p>
             <div class="popup-divider"></div>
             <p class="popup-text">
-              Esse jogo é totalmente gratuito e sem anúncios.<br>
-              Se você estiver gostando do projeto, considere apoiar o desenvolvimento ❤️
+              Obrigado por jogar! Este projeto evolui com apoio da comunidade.<br>
+              Se quiser, use o botão abaixo para apoiar o desenvolvimento ❤️
             </p>
             <div class="popup-buttons">
               <button class="popup-btn" @click="closePopup">Continuar jogando</button>
@@ -141,6 +141,7 @@ const COLS = 7;
 
 // ==================== STORAGE ====================
 const savedGame = useStorage("2048connect-save", null);
+const gameStats = useStorage("2048connect-stats", { merges: 0, chains: 0, highestChain: 0, gamesPlayed: 1 });
 const settings = useStorage("2048connect-settings", { soundEnabled: true, soundVolume: 0.5 });
 
 // ==================== STATE ====================
@@ -162,8 +163,9 @@ const svgPath = ref("");
 const svgPoints = ref([]);
 const svgViewBox = ref("0 0 1 1");
 
-const nextObjective = computed(() => { let v = 2; while (v <= bestTile.value) v *= 2; return v; });
-const objectivePercent = computed(() => Math.round((bestTile.value / nextObjective.value) * 100));
+const highestTile = computed(() => bestTile.value || 2);
+const nextObjective = computed(() => { let v = 2048; while (v <= highestTile.value) v *= 2; return v; });
+const objectivePercent = computed(() => Math.max(0, Math.min(100, Math.round((highestTile.value / nextObjective.value) * 100))));
 
 const { height: winH, width: winW } = useWindowSize();
 const tileSize = computed(() => {
@@ -370,7 +372,7 @@ function calculateMerge(values) {
 
 function isAdjacent(r1, c1, r2, c2) {
   const dr = Math.abs(r1 - r2), dc = Math.abs(c1 - c2);
-  return dr <= 1 && dc <= 1 && !(dr === 0 && dc === 0);
+  return dr + dc === 1;
 }
 
 function getTileRowCol(id) {
@@ -505,6 +507,12 @@ function endSelection() {
         clearAnim(lastData);
       }
       score.value += finalValue;
+      gameStats.value = {
+        ...gameStats.value,
+        merges: (gameStats.value?.merges || 0) + 1,
+        chains: (gameStats.value?.chains || 0) + selectionIds.length,
+        highestChain: Math.max(gameStats.value?.highestChain || 0, selectionIds.length),
+      };
       if (finalValue > bestTile.value) bestTile.value = finalValue;
       if (debug.value) lastMergeResult.value = finalValue;
       if (finalValue > 0) playSound("merge");
@@ -583,7 +591,16 @@ function scheduleSave() {
 function saveGame() {
   const data = [];
   for (const row of tiles.value) { const r = []; for (const t of row.tiles) r.push(t.value); data.push(r); }
-  savedGame.value = { board: data, score: score.value, bestTile: bestTile.value, lastPopup: lastPopupTarget.value };
+  savedGame.value = {
+    board: data,
+    score: score.value,
+    bestTile: bestTile.value,
+    lastPopup: lastPopupTarget.value,
+    nextObjective: nextObjective.value,
+    settings: settings.value,
+    stats: gameStats.value,
+    updatedAt: Date.now(),
+  };
 }
 
 function loadGame() {
@@ -592,6 +609,8 @@ function loadGame() {
   score.value = sg.score || 0;
   bestTile.value = sg.bestTile || 0;
   lastPopupTarget.value = sg.lastPopup || 0;
+  if (sg.settings) settings.value = { ...settings.value, ...sg.settings };
+  if (sg.stats) gameStats.value = { ...gameStats.value, ...sg.stats };
   const data = sg.board;
   if (data && data.length === ROWS)
     for (let i = 0; i < ROWS; i++) for (let j = 0; j < COLS; j++) tiles.value[i].tiles[j].value = data[i]?.[j] || 0;
@@ -622,7 +641,7 @@ function restartGame() {
 
 function checkObjective(justMergedValue) {
   const value = justMergedValue || bestTile.value;
-  if (value >= 64 && value > lastPopupTarget.value) {
+  if (value >= 2048 && value > lastPopupTarget.value) {
     lastPopupTarget.value = value;
     popupTarget.value = value;
     showPopup.value = true;
@@ -706,7 +725,7 @@ function mountNumber(val) {
   padding-top: env(safe-area-inset-top, 0);
   padding-bottom: env(safe-area-inset-bottom, 0);
 }
-.game-container {
+ .game-container {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -714,8 +733,9 @@ function mountNumber(val) {
   padding: 6px 8px;
   width: 100%;
   max-width: 400px;
-  height: 100%;
+  height: 100dvh;
   max-height: 100dvh;
+  overflow: hidden;
   position: relative;
   z-index: 1;
 }
@@ -738,6 +758,7 @@ function mountNumber(val) {
 /* BOARD — geometry-based hit detection (no elementFromPoint) */
 .board {
   position: relative;
+  max-height: calc(100dvh - 130px);
   background: rgba(255,255,255,0.04);
   backdrop-filter: blur(6px);
   border: 1px solid rgba(255,215,0,0.1);
