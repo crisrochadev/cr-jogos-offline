@@ -43,7 +43,7 @@
         <div class="objective-row">
           <span class="objective-label">Next: {{ mountNumber(highestTile).val }}</span>
           <div class="progress-track"><div class="progress-fill" :style="{ width: objectivePercent + '%' }"></div></div>
-          <span class="objective-label">Goal: {{ mountNumber(nextObjective).val }}</span>
+          <span class="objective-label">Objetivo: {{ mountNumber(nextObjective).val }}</span>
         </div>
       </div>
 
@@ -126,7 +126,7 @@
           <div class="popup-card">
             <div class="popup-star">✨</div>
             <h2 class="popup-title">Novo marco desbloqueado! 🎉</h2>
-            <p class="popup-sub">Você alcançou <strong>{{ mountNumber(popupTarget).val }}</strong> e o próximo objetivo é <strong>{{ mountNumber(nextObjective).val }}</strong>.</p>
+            <p class="popup-sub">Você alcançou <strong>{{ mountNumber(popupTarget).val }}</strong> e o próximo objetivo é <strong>{{ mountNumber(popupNextTarget).val }}</strong>.</p>
             <div class="popup-divider"></div>
             <p class="popup-text">
               Obrigado por jogar! Este projeto evolui com apoio da comunidade.<br>
@@ -145,7 +145,8 @@
             <h2 class="popup-title">Converter Score</h2>
             <p class="popup-sub">Escolha quantas moedas deseja gerar.</p>
             <input class="convert-input" type="range" min="1" :max="convertibleCoins || 1" v-model.number="convertAmount" />
-            <p class="popup-sub">Score gasto: <strong>{{ (convertAmount * 1000).toLocaleString() }}</strong> → Moedas: <strong>+{{ convertAmount }}</strong></p>
+            <div class="progress-track"><div class="progress-fill" :style="{ width: `${convertProgressPct}%` }"></div></div>
+            <p class="popup-sub">Score gasto: <strong>{{ (convertAmount * 1000).toLocaleString() }}</strong> / {{ score.toLocaleString() }} → Moedas: <strong>+{{ convertAmount }}</strong></p>
             <div class="popup-buttons">
               <button class="popup-btn" @click="showConvertModal = false">Cancelar</button>
               <button class="popup-btn popup-btn-support" :disabled="convertAmount <= 0 || convertAmount > convertibleCoins" @click="confirmConvertScore">Confirmar conversão</button>
@@ -263,6 +264,11 @@ const highestTile = computed(() => bestTile.value || 2);
 const nextObjective = computed(() => { let v = 2048; while (v <= highestTile.value) v *= 2; return v; });
 const objectivePercent = computed(() => Math.max(0, Math.min(100, Math.round((highestTile.value / nextObjective.value) * 100))));
 const convertibleCoins = computed(() => Math.floor(score.value / 1000));
+const popupNextTarget = computed(() => popupTarget.value > 0 ? popupTarget.value * 2 : nextObjective.value);
+const convertProgressPct = computed(() => {
+  if (score.value <= 0) return 0;
+  return Math.max(0, Math.min(100, Math.round(((convertAmount.value * 1000) / score.value) * 100)));
+});
 
 const { height: winH, width: winW } = useWindowSize();
 const hudHeight = ref(126);
@@ -518,7 +524,10 @@ function canMergeInto(ids, targetValue) {
     const t = getTile(id);
     if (t && t.value > 0) freq[t.value] = (freq[t.value] || 0) + 1;
   }
-  if (freq[targetValue] > 0) return true;
+  if (freq[targetValue] > 0) {
+    const current = calculateProgressiveMerge(ids.map((id) => getTile(id)?.value || 0).filter(Boolean));
+    return targetValue >= current;
+  }
   const sorted = Object.keys(freq).map(Number).sort((a, b) => a - b);
   const pending = {};
   for (const val of sorted) {
@@ -567,6 +576,10 @@ function tryExtendSelection(id) {
     showInvalid(id); return false;
   }
   if (!canMergeInto(selectionIds, t.value)) {
+    showInvalid(id); return false;
+  }
+  const chainCurrent = calculateProgressiveMerge(selectionIds.map((sid) => getTile(sid)?.value || 0).filter(Boolean));
+  if (t.value < chainCurrent) {
     showInvalid(id); return false;
   }
   selectionIds.push(id);
@@ -708,19 +721,25 @@ function scheduleSave() {
 }
 
 function saveGame() {
+  const snapshot = serializeGameState();
+  savedGame.value = snapshot;
+}
+
+function serializeGameState() {
   const data = [];
   for (const row of tiles.value) { const r = []; for (const t of row.tiles) r.push(t.value); data.push(r); }
-  savedGame.value = {
+  return JSON.parse(JSON.stringify({
     board: data,
     score: score.value,
     bestTile: bestTile.value,
     lastPopup: lastPopupTarget.value,
+    milestones: unlockedMilestones.value,
     nextObjective: nextObjective.value,
     settings: settings.value,
     stats: gameStats.value,
     economy: economy.value,
     updatedAt: Date.now(),
-  };
+  }));
 }
 
 function loadGame() {
@@ -731,6 +750,7 @@ function loadGame() {
   lastPopupTarget.value = sg.lastPopup || 0;
   if (sg.settings) settings.value = { ...settings.value, ...sg.settings };
   if (sg.economy) economy.value = { ...economy.value, ...sg.economy };
+  if (sg.milestones) unlockedMilestones.value = [...sg.milestones];
   if (sg.stats) gameStats.value = { ...gameStats.value, ...sg.stats };
   const data = sg.board;
   if (data && data.length === ROWS)
@@ -757,7 +777,7 @@ function restartGame() {
   rebuildTileMap();
   initBoard();
   clearSelectionState();
-  savedGame.value = null;
+  saveGame();
   showResetModal.value = false;
 }
 
