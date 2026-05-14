@@ -21,7 +21,8 @@
     "register-service-worker": "^1.7.2",
     "tailwindcss": "^4.2.4",
     "vue": "^3.5.22",
-    "vue-router": "^5.0.0"
+    "vue-router": "^5.0.0",
+    "vue3-touch-events": "^5.0.15"
   },
   "devDependencies": {
     "@quasar/app-vite": "^2.1.0",
