@@ -15,7 +15,10 @@
         <div class="hud-actions">
           <button class="hud-mini-btn" @click="goBack">Voltar</button>
           <button class="hud-mini-btn" @click="showResetModal = true">Reset</button>
-          <button class="hud-mini-btn" @click="convertScoreToCoins">Converter {{ convertibleCoins }}💎</button>
+          <button class="hud-mini-btn hud-convert-btn" @click="openConvertModal">
+            <span>✨ Converter score</span>
+            <small>1000 pts = 1 💎 (disp: {{ convertibleCoins }})</small>
+          </button>
         </div>
         <div class="hud-topbar hidden-meta">
           <button class="game-back-btn" @click="goBack" title="Back">
@@ -137,14 +140,37 @@
         </div>
       </Teleport>
       <Teleport to="body">
+        <div v-if="showConvertModal" class="popup-overlay" @click.self="showConvertModal = false">
+          <div class="popup-card">
+            <h2 class="popup-title">Converter Score</h2>
+            <p class="popup-sub">Escolha quantas moedas deseja gerar.</p>
+            <input class="convert-input" type="range" min="1" :max="convertibleCoins || 1" v-model.number="convertAmount" />
+            <p class="popup-sub">Score gasto: <strong>{{ (convertAmount * 1000).toLocaleString() }}</strong> → Moedas: <strong>+{{ convertAmount }}</strong></p>
+            <div class="popup-buttons">
+              <button class="popup-btn" @click="showConvertModal = false">Cancelar</button>
+              <button class="popup-btn popup-btn-support" :disabled="convertAmount <= 0 || convertAmount > convertibleCoins" @click="confirmConvertScore">Confirmar conversão</button>
+            </div>
+          </div>
+        </div>
+      </Teleport>
+      <Teleport to="body">
         <div v-if="showCoinsModal" class="popup-overlay" @click.self="showCoinsModal = false">
           <div class="popup-card">
             <h2 class="popup-title">Moedas</h2>
             <div class="popup-buttons">
               <button class="popup-btn" @click="mockBuyCoins">Comprar pacote (em breve)</button>
-              <button class="popup-btn popup-btn-support" @click="watchAdCoins">Assistir anúncio (+10)</button>
+              <button class="popup-btn popup-btn-support" @click="showRewardedAd">Assistir anúncio (+10)</button>
               <button class="popup-btn" @click="showCoinsModal = false">Fechar</button>
             </div>
+          </div>
+        </div>
+      </Teleport>
+      <Teleport to="body">
+        <div v-if="showRewardedModal" class="popup-overlay">
+          <div class="popup-card">
+            <h2 class="popup-title">Anúncio recompensado</h2>
+            <p class="popup-sub">Assistindo... {{ rewardedCountdown }}s</p>
+            <div class="progress-track"><div class="progress-fill" :style="{ width: `${(1 - rewardedCountdown/5)*100}%` }"></div></div>
           </div>
         </div>
       </Teleport>
@@ -206,6 +232,8 @@ const score = ref(0);
 const bestTile = ref(0);
 const showPopup = ref(false);
 const showCoinsModal = ref(false);
+const showConvertModal = ref(false);
+const showRewardedModal = ref(false);
 const showDeadBoardModal = ref(false);
 const showResetModal = ref(false);
 const popupTarget = ref(0);
@@ -214,6 +242,9 @@ const invalidTiles = ref(new Set());
 const economy = useStorage("2048connect-economy", { coins: 73, totalScore: 0, spentCoins: 0 });
 const hudRef = ref(null);
 const safeBottom = ref(0);
+const convertAmount = ref(1);
+const rewardedCountdown = ref(5);
+const unlockedMilestones = useStorage("2048connect-milestones", []);
 
 // Selection state (plain vars, not reactive — accessed imperatively)
 let selectionIds = [];
@@ -234,11 +265,12 @@ const objectivePercent = computed(() => Math.max(0, Math.min(100, Math.round((hi
 const convertibleCoins = computed(() => Math.floor(score.value / 1000));
 
 const { height: winH, width: winW } = useWindowSize();
+const hudHeight = ref(126);
 const tileSize = computed(() => {
-  const vh = winH.value;
+  const vh = winH.value - safeBottom.value;
   const vw = Math.min(winW.value - 12, 430);
   const isSmall = vw < 400;
-  const hudH = isSmall ? 96 : 106;
+  const hudH = Math.max(90, Math.ceil(hudHeight.value));
   const containerPadV = isSmall ? 4 : 8;
   const containerPadH = isSmall ? 6 : 8;
   const boardPad = isSmall ? 8 : 10;
@@ -437,7 +469,7 @@ function calculateMerge(values) {
 
 function isAdjacent(r1, c1, r2, c2) {
   const dr = Math.abs(r1 - r2), dc = Math.abs(c1 - c2);
-  return dr + dc === 1;
+  return dr <= 1 && dc <= 1 && (dr + dc > 0);
 }
 
 function getTileRowCol(id) {
@@ -558,7 +590,7 @@ function endSelection() {
       if (t && t.value > 0) values.push(t.value);
     }
     if (values.length >= 2) {
-      const finalValue = calculateMerge(values);
+      const finalValue = calculateProgressiveMerge(values);
       const lastId = selectionIds[selectionIds.length - 1];
       const cols = new Set();
       for (let i = 0; i < selectionIds.length - 1; i++) {
@@ -581,7 +613,10 @@ function endSelection() {
         chains: (gameStats.value?.chains || 0) + selectionIds.length,
         highestChain: Math.max(gameStats.value?.highestChain || 0, selectionIds.length),
       };
-      if (finalValue > bestTile.value) bestTile.value = finalValue;
+      if (finalValue > bestTile.value) {
+        bestTile.value = finalValue;
+        handleMilestone(bestTile.value);
+      }
       if (debug.value) lastMergeResult.value = finalValue;
       if (finalValue > 0) playSound("merge");
       checkObjective(finalValue);
@@ -739,7 +774,7 @@ function hasAnyValidMove() {
   for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
     const current = tiles.value[r].tiles[c];
     if (!current || current.value <= 0) continue;
-    const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+    const dirs = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,-1],[1,-1],[-1,1]];
     for (const [dr,dc] of dirs) {
       const n = tiles.value[r+dr]?.tiles?.[c+dc];
       if (n && n.value > 0 && canMergeInto([current.id], n.value)) return true;
@@ -758,13 +793,56 @@ function shuffleLockedTiles() {
   showDeadBoardModal.value = false;
 }
 function mockBuyCoins() { economy.value.coins += 50; showCoinsModal.value = false; }
-function watchAdCoins() { economy.value.coins += 10; showCoinsModal.value = false; }
+function onRewardGranted() { economy.value.coins += 10; showRewardedModal.value = false; rewardedCountdown.value = 5; saveGame(); }
+function showRewardedAd() {
+  showRewardedModal.value = true;
+  showCoinsModal.value = false;
+  const timer = setInterval(() => {
+    rewardedCountdown.value -= 1;
+    if (rewardedCountdown.value <= 0) { clearInterval(timer); onRewardGranted(); }
+  }, 1000);
+}
 function confirmReset() { restartGame(); }
+function openConvertModal() { convertAmount.value = Math.max(1, Math.min(convertibleCoins.value, convertAmount.value)); showConvertModal.value = true; }
+function confirmConvertScore() {
+  if (convertAmount.value <= 0 || convertAmount.value > convertibleCoins.value) return;
+  score.value -= convertAmount.value * 1000;
+  economy.value.coins += convertAmount.value;
+  showConvertModal.value = false;
+  saveGame();
+}
 function convertScoreToCoins() {
   const coins = Math.floor(score.value / 1000);
   if (coins <= 0) return;
   score.value -= coins * 1000;
   economy.value.coins += coins;
+  saveGame();
+}
+function calculateProgressiveMerge(values) {
+  const arr = [...values].sort((a,b)=>a-b);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let i = 0; i < arr.length - 1; i++) {
+      if (arr[i] === arr[i+1]) {
+        arr.splice(i, 2, arr[i] * 2);
+        changed = true;
+        break;
+      }
+    }
+    arr.sort((a,b)=>a-b);
+  }
+  return arr[arr.length - 1] || 0;
+}
+function handleMilestone(value) {
+  if (unlockedMilestones.value.includes(value)) return;
+  unlockedMilestones.value = [...unlockedMilestones.value, value];
+  const reward = Math.max(1, Math.floor(Math.log2(value)));
+  economy.value.coins += reward;
+  popupTarget.value = value;
+  showPopup.value = true;
+  playSound("complete");
+  saveGame();
 }
 
 function closePopup() { showPopup.value = false; }
@@ -815,6 +893,10 @@ onMounted(() => {
   document.addEventListener("pointercancel", onPointerCancel);
   document.addEventListener("visibilitychange", onVisibilityChange);
   window.addEventListener("resize", rebuildTileMap);
+  const h = document.querySelector(".hud");
+  if (h) hudHeight.value = h.getBoundingClientRect().height;
+  safeBottom.value = parseInt(getComputedStyle(document.documentElement).getPropertyValue("padding-bottom")) || 0;
+  requestNotificationPermission();
   if (import.meta.env.DEV) debug.value = true;
 });
 
@@ -831,6 +913,7 @@ watch([score, bestTile], () => {
   if (!hasAnyValidMove()) showDeadBoardModal.value = true;
   saveGame();
 });
+watch(economy, () => saveGame(), { deep: true });
 watch(
   () => tiles.value.map(r => r.tiles.map(t => t.value)),
   () => scheduleSave(),
@@ -863,6 +946,10 @@ function mountNumber(val) {
   if (len === 15) return { val: val.toString().slice(0, 1) + "Q", size: "24px" };
   if (len === 16) return { val: val.toString().slice(0, 2) + "Q", size: "18px" };
   return { val, size: "14px" };
+}
+function requestNotificationPermission() {
+  if (!("Notification" in window)) return;
+  if (Notification.permission === "default") Notification.requestPermission();
 }
 </script>
 
@@ -902,6 +989,11 @@ function mountNumber(val) {
 .hud-score { text-align:center; font-size: clamp(28px, 7vw, 52px); color:#fff; font-weight:800; letter-spacing:.5px; line-height:1; margin:0; }
 .hud-actions { display:flex; gap:6px; }
 .hud-mini-btn { flex:1; min-height:30px; border-radius:10px; border:1px solid rgba(255,255,255,.22); background:rgba(19,35,105,.55); color:#fff; font-size:12px; font-weight:700; }
+.hud-convert-btn { display:flex; flex-direction:column; align-items:flex-start; background:linear-gradient(135deg,#325cf3,#6f3df5); border-color:rgba(255,255,255,.35); box-shadow:0 4px 12px rgba(68,90,255,.35); animation:ctaPulse 1.6s ease-in-out infinite; padding:4px 8px; }
+.hud-convert-btn small { font-size:10px; opacity:.9; }
+.hud-convert-btn:active { transform:scale(.98); }
+.convert-input { width:100%; margin:12px 0; accent-color:#5e7bff; }
+@keyframes ctaPulse { 0%,100% { filter:brightness(1); } 50% { filter:brightness(1.1); } }
 .hud-topbar { display: flex; gap: 8px; align-items: center; width: 100%; }
 .hidden-meta { display:none; }
 .hud-item { background: rgba(255,255,255,0.06); backdrop-filter: blur(10px); border: 1px solid rgba(255,215,0,0.15); border-radius: 12px; padding: 6px 12px; display: flex; flex-direction: column; flex: 1; min-width: 0; }
