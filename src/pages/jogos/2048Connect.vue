@@ -3,20 +3,23 @@
     <div class="game-container">
 
       <div class="hud">
+        <div class="hud-topline">
+          <div class="top-chip">
+            <span>💎</span>
+            <strong>73</strong>
+            <button class="mini-add">+</button>
+          </div>
+          <div class="top-chip top-chip-level">👑 Level 14</div>
+        </div>
+        <div class="hud-score">{{ score.toLocaleString() }}</div>
         <div class="hud-topbar">
           <button class="game-back-btn" @click="goBack" title="Back">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
               <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
             </svg>
           </button>
-          <div class="hud-item score-box">
-            <span class="hud-label">Score</span>
-            <span class="hud-value">{{ score.toLocaleString() }}</span>
-          </div>
-          <div class="hud-item best-box">
-            <span class="hud-label">Best</span>
-            <span class="hud-value">{{ bestTile.toLocaleString() }}</span>
-          </div>
+          <div class="hud-item score-box"><span class="hud-label">Score</span><span class="hud-value">{{ score.toLocaleString() }}</span></div>
+          <div class="hud-item best-box"><span class="hud-label">Best</span><span class="hud-value">{{ bestTile.toLocaleString() }}</span></div>
           <button class="restart-btn" @click="restartGame" title="Restart">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
               <path d="M17.65 6.35A7.96 7.96 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
@@ -30,9 +33,9 @@
           </button>
         </div>
         <div class="objective-row">
-          <span class="objective-label">Next: {{ nextObjective }}</span>
+          <span class="objective-label">Next: {{ mountNumber(highestTile).val }}</span>
           <div class="progress-track"><div class="progress-fill" :style="{ width: objectivePercent + '%' }"></div></div>
-          <span class="objective-pct">{{ objectivePercent }}%</span>
+          <span class="objective-label">Goal: {{ mountNumber(nextObjective).val }}</span>
         </div>
       </div>
 
@@ -97,17 +100,23 @@
           </div>
         </div>
       </div>
+      <div class="bottom-tools">
+        <button class="tool-btn">↩</button>
+        <button class="tool-btn">📣</button>
+        <button class="tool-btn">🛒</button>
+        <button class="tool-btn">⏸</button>
+      </div>
 
       <Teleport to="body">
         <div v-if="showPopup" class="popup-overlay" @click.self="closePopup">
           <div class="popup-card">
             <div class="popup-star">✨</div>
-            <h2 class="popup-title">Parabéns!</h2>
-            <p class="popup-sub">Você alcançou <strong>{{ popupTarget }}</strong>!</p>
+            <h2 class="popup-title">Novo marco desbloqueado! 🎉</h2>
+            <p class="popup-sub">Você alcançou <strong>{{ mountNumber(popupTarget).val }}</strong> e o próximo objetivo é <strong>{{ mountNumber(nextObjective).val }}</strong>.</p>
             <div class="popup-divider"></div>
             <p class="popup-text">
-              Esse jogo é totalmente gratuito e sem anúncios.<br>
-              Se você estiver gostando do projeto, considere apoiar o desenvolvimento ❤️
+              Obrigado por jogar! Este projeto evolui com apoio da comunidade.<br>
+              Se quiser, use o botão abaixo para apoiar o desenvolvimento ❤️
             </p>
             <div class="popup-buttons">
               <button class="popup-btn" @click="closePopup">Continuar jogando</button>
@@ -141,6 +150,7 @@ const COLS = 7;
 
 // ==================== STORAGE ====================
 const savedGame = useStorage("2048connect-save", null);
+const gameStats = useStorage("2048connect-stats", { merges: 0, chains: 0, highestChain: 0, gamesPlayed: 1 });
 const settings = useStorage("2048connect-settings", { soundEnabled: true, soundVolume: 0.5 });
 
 // ==================== STATE ====================
@@ -162,8 +172,9 @@ const svgPath = ref("");
 const svgPoints = ref([]);
 const svgViewBox = ref("0 0 1 1");
 
-const nextObjective = computed(() => { let v = 2; while (v <= bestTile.value) v *= 2; return v; });
-const objectivePercent = computed(() => Math.round((bestTile.value / nextObjective.value) * 100));
+const highestTile = computed(() => bestTile.value || 2);
+const nextObjective = computed(() => { let v = 2048; while (v <= highestTile.value) v *= 2; return v; });
+const objectivePercent = computed(() => Math.max(0, Math.min(100, Math.round((highestTile.value / nextObjective.value) * 100))));
 
 const { height: winH, width: winW } = useWindowSize();
 const tileSize = computed(() => {
@@ -370,7 +381,7 @@ function calculateMerge(values) {
 
 function isAdjacent(r1, c1, r2, c2) {
   const dr = Math.abs(r1 - r2), dc = Math.abs(c1 - c2);
-  return dr <= 1 && dc <= 1 && !(dr === 0 && dc === 0);
+  return dr + dc === 1;
 }
 
 function getTileRowCol(id) {
@@ -505,6 +516,12 @@ function endSelection() {
         clearAnim(lastData);
       }
       score.value += finalValue;
+      gameStats.value = {
+        ...gameStats.value,
+        merges: (gameStats.value?.merges || 0) + 1,
+        chains: (gameStats.value?.chains || 0) + selectionIds.length,
+        highestChain: Math.max(gameStats.value?.highestChain || 0, selectionIds.length),
+      };
       if (finalValue > bestTile.value) bestTile.value = finalValue;
       if (debug.value) lastMergeResult.value = finalValue;
       if (finalValue > 0) playSound("merge");
@@ -583,7 +600,16 @@ function scheduleSave() {
 function saveGame() {
   const data = [];
   for (const row of tiles.value) { const r = []; for (const t of row.tiles) r.push(t.value); data.push(r); }
-  savedGame.value = { board: data, score: score.value, bestTile: bestTile.value, lastPopup: lastPopupTarget.value };
+  savedGame.value = {
+    board: data,
+    score: score.value,
+    bestTile: bestTile.value,
+    lastPopup: lastPopupTarget.value,
+    nextObjective: nextObjective.value,
+    settings: settings.value,
+    stats: gameStats.value,
+    updatedAt: Date.now(),
+  };
 }
 
 function loadGame() {
@@ -592,6 +618,8 @@ function loadGame() {
   score.value = sg.score || 0;
   bestTile.value = sg.bestTile || 0;
   lastPopupTarget.value = sg.lastPopup || 0;
+  if (sg.settings) settings.value = { ...settings.value, ...sg.settings };
+  if (sg.stats) gameStats.value = { ...gameStats.value, ...sg.stats };
   const data = sg.board;
   if (data && data.length === ROWS)
     for (let i = 0; i < ROWS; i++) for (let j = 0; j < COLS; j++) tiles.value[i].tiles[j].value = data[i]?.[j] || 0;
@@ -622,7 +650,7 @@ function restartGame() {
 
 function checkObjective(justMergedValue) {
   const value = justMergedValue || bestTile.value;
-  if (value >= 64 && value > lastPopupTarget.value) {
+  if (value >= 2048 && value > lastPopupTarget.value) {
     lastPopupTarget.value = value;
     popupTarget.value = value;
     showPopup.value = true;
@@ -710,18 +738,24 @@ function mountNumber(val) {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   padding: 6px 8px;
   width: 100%;
   max-width: 400px;
-  height: 100%;
+  height: 100dvh;
   max-height: 100dvh;
+  overflow: hidden;
   position: relative;
   z-index: 1;
 }
 
 /* HUD */
 .hud { width: 100%; display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; }
+.hud-topline { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:2px; }
+.top-chip { display:flex; align-items:center; gap:8px; padding:6px 10px; border-radius:12px; background:rgba(58,94,198,.55); border:1px solid rgba(255,255,255,.2); color:#fff; font-weight:700; }
+.top-chip-level { padding:6px 14px; }
+.mini-add { border:0; border-radius:8px; width:24px; height:24px; background:#6ed21f; color:#fff; font-weight:800; }
+.hud-score { text-align:center; font-size: clamp(28px, 5vw, 56px); color:#fff; font-weight:800; letter-spacing:1px; line-height:1; margin:4px 0; }
 .hud-topbar { display: flex; gap: 6px; align-items: center; width: 100%; }
 .hud-item { background: rgba(255,255,255,0.06); backdrop-filter: blur(10px); border: 1px solid rgba(255,215,0,0.15); border-radius: 12px; padding: 6px 12px; display: flex; flex-direction: column; flex: 1; min-width: 0; }
 .hud-label { font-size: 9px; text-transform: uppercase; letter-spacing: 1px; color: rgba(255,215,0,0.6); font-weight: 600; }
@@ -730,7 +764,7 @@ function mountNumber(val) {
 .restart-btn:hover, .sound-btn:hover, .game-back-btn:hover { background: rgba(255,215,0,0.15); color: #ffd700; }
 .restart-btn:hover { transform: rotate(30deg); }
 .objective-row { display: flex; align-items: center; gap: 6px; }
-.objective-label { font-size: 10px; color: rgba(255,215,0,0.5); font-weight: 600; white-space: nowrap; letter-spacing: 0.5px; }
+.objective-label { font-size: 11px; color: rgba(255,215,0,0.8); font-weight: 700; white-space: nowrap; letter-spacing: 0.4px; }
 .progress-track { flex: 1; height: 3px; background: rgba(255,255,255,0.1); border-radius: 2px; overflow: hidden; }
 .progress-fill { height: 100%; background: linear-gradient(90deg, #ffd700, #ff8c00); border-radius: 2px; transition: width 0.4s ease; }
 .objective-pct { font-size: 10px; color: rgba(255,215,0,0.5); font-weight: 700; min-width: 28px; text-align: right; }
@@ -738,6 +772,7 @@ function mountNumber(val) {
 /* BOARD — geometry-based hit detection (no elementFromPoint) */
 .board {
   position: relative;
+  max-height: calc(100dvh - 130px);
   background: rgba(255,255,255,0.04);
   backdrop-filter: blur(6px);
   border: 1px solid rgba(255,215,0,0.1);
@@ -750,6 +785,8 @@ function mountNumber(val) {
   user-select: none;
   -webkit-user-select: none;
 }
+.bottom-tools { width:100%; display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-top:4px; }
+.tool-btn { height:50px; border-radius:12px; border:1px solid rgba(255,255,255,.35); background:rgba(15,27,95,.55); color:#fff; font-size:24px; }
 .board-row { display: flex; gap: 4px; justify-content: center; }
 .tile { width: var(--ts); height: var(--ts); flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
 .tile-inner { width: 100%; height: 100%; border-radius: 8px; display: flex; align-items: center; justify-content: center; cursor: pointer; position: relative; z-index: 1; }
