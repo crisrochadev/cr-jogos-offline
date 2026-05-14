@@ -6,12 +6,17 @@
         <div class="hud-topline">
           <div class="top-chip">
             <span>💎</span>
-            <strong>73</strong>
-            <button class="mini-add">+</button>
+            <strong>{{ economy.coins }}</strong>
+            <button class="mini-add" @click="showCoinsModal = true">+</button>
           </div>
           <div class="top-chip top-chip-level">👑 Level 14</div>
         </div>
         <div class="hud-score">{{ score.toLocaleString() }}</div>
+        <div class="hud-actions">
+          <button class="hud-mini-btn" @click="goBack">Voltar</button>
+          <button class="hud-mini-btn" @click="showResetModal = true">Reset</button>
+          <button class="hud-mini-btn" @click="convertScoreToCoins">Converter {{ convertibleCoins }}💎</button>
+        </div>
         <div class="hud-topbar hidden-meta">
           <button class="game-back-btn" @click="goBack" title="Back">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
@@ -131,6 +136,41 @@
           </div>
         </div>
       </Teleport>
+      <Teleport to="body">
+        <div v-if="showCoinsModal" class="popup-overlay" @click.self="showCoinsModal = false">
+          <div class="popup-card">
+            <h2 class="popup-title">Moedas</h2>
+            <div class="popup-buttons">
+              <button class="popup-btn" @click="mockBuyCoins">Comprar pacote (em breve)</button>
+              <button class="popup-btn popup-btn-support" @click="watchAdCoins">Assistir anúncio (+10)</button>
+              <button class="popup-btn" @click="showCoinsModal = false">Fechar</button>
+            </div>
+          </div>
+        </div>
+      </Teleport>
+      <Teleport to="body">
+        <div v-if="showDeadBoardModal" class="popup-overlay" @click.self="showDeadBoardModal = false">
+          <div class="popup-card">
+            <h2 class="popup-title">Sem jogadas</h2>
+            <p class="popup-sub">Você pode reiniciar ou embaralhar 5 peças por 10 moedas.</p>
+            <div class="popup-buttons">
+              <button class="popup-btn popup-btn-support" @click="restartGame">Reiniciar partida</button>
+              <button class="popup-btn" @click="shuffleLockedTiles">Embaralhar 5 peças (10💎)</button>
+            </div>
+          </div>
+        </div>
+      </Teleport>
+      <Teleport to="body">
+        <div v-if="showResetModal" class="popup-overlay" @click.self="showResetModal = false">
+          <div class="popup-card">
+            <h2 class="popup-title">Reiniciar?</h2>
+            <div class="popup-buttons">
+              <button class="popup-btn" @click="showResetModal = false">Cancelar</button>
+              <button class="popup-btn popup-btn-support" @click="confirmReset">Confirmar reinício</button>
+            </div>
+          </div>
+        </div>
+      </Teleport>
 
     </div>
   </q-page>
@@ -165,9 +205,15 @@ const boardRef = ref(null);
 const score = ref(0);
 const bestTile = ref(0);
 const showPopup = ref(false);
+const showCoinsModal = ref(false);
+const showDeadBoardModal = ref(false);
+const showResetModal = ref(false);
 const popupTarget = ref(0);
 const lastPopupTarget = ref(0);
 const invalidTiles = ref(new Set());
+const economy = useStorage("2048connect-economy", { coins: 73, totalScore: 0, spentCoins: 0 });
+const hudRef = ref(null);
+const safeBottom = ref(0);
 
 // Selection state (plain vars, not reactive — accessed imperatively)
 let selectionIds = [];
@@ -185,6 +231,7 @@ let floatingScoreId = 0;
 const highestTile = computed(() => bestTile.value || 2);
 const nextObjective = computed(() => { let v = 2048; while (v <= highestTile.value) v *= 2; return v; });
 const objectivePercent = computed(() => Math.max(0, Math.min(100, Math.round((highestTile.value / nextObjective.value) * 100))));
+const convertibleCoins = computed(() => Math.floor(score.value / 1000));
 
 const { height: winH, width: winW } = useWindowSize();
 const tileSize = computed(() => {
@@ -588,6 +635,19 @@ function onPointerMove(e) {
   updateDragVisual(e.clientX, e.clientY);
   const tile = getTileFromPosition(e.clientX, e.clientY);
   if (!tile || tile.value <= 0) return;
+  if (selectionIds.length > 0) {
+    const lastId = selectionIds[selectionIds.length - 1];
+    const lp = getTileRowCol(lastId);
+    if (lp) {
+      const dx = e.clientX - (getTileGeometry(lp.row, lp.col)?.cx || e.clientX);
+      const dy = e.clientY - (getTileGeometry(lp.row, lp.col)?.cy || e.clientY);
+      if (Math.abs(dx) > Math.abs(dy)) {
+        const colShift = dx > 0 ? 1 : -1;
+        const adj = tiles.value[lp.row]?.tiles?.[lp.col + colShift];
+        if (adj && adj.value > 0 && !selectionIds.includes(adj.id)) tryExtendSelection(adj.id);
+      }
+    }
+  }
   if (selectionIds.includes(tile.id)) handleDeselect(tile.id);
   else tryExtendSelection(tile.id);
 }
@@ -623,6 +683,7 @@ function saveGame() {
     nextObjective: nextObjective.value,
     settings: settings.value,
     stats: gameStats.value,
+    economy: economy.value,
     updatedAt: Date.now(),
   };
 }
@@ -634,6 +695,7 @@ function loadGame() {
   bestTile.value = sg.bestTile || 0;
   lastPopupTarget.value = sg.lastPopup || 0;
   if (sg.settings) settings.value = { ...settings.value, ...sg.settings };
+  if (sg.economy) economy.value = { ...economy.value, ...sg.economy };
   if (sg.stats) gameStats.value = { ...gameStats.value, ...sg.stats };
   const data = sg.board;
   if (data && data.length === ROWS)
@@ -661,16 +723,48 @@ function restartGame() {
   initBoard();
   clearSelectionState();
   savedGame.value = null;
+  showResetModal.value = false;
 }
 
 function checkObjective(justMergedValue) {
   const value = justMergedValue || bestTile.value;
-  if (value >= 2048 && value > lastPopupTarget.value) {
+  if (value >= 2048 && value > lastPopupTarget.value && value % 2048 === 0) {
     lastPopupTarget.value = value;
     popupTarget.value = value;
     showPopup.value = true;
     playSound("complete");
   }
+}
+function hasAnyValidMove() {
+  for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+    const current = tiles.value[r].tiles[c];
+    if (!current || current.value <= 0) continue;
+    const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+    for (const [dr,dc] of dirs) {
+      const n = tiles.value[r+dr]?.tiles?.[c+dc];
+      if (n && n.value > 0 && canMergeInto([current.id], n.value)) return true;
+    }
+  }
+  return false;
+}
+function shuffleLockedTiles() {
+  if (economy.value.coins < 10) return;
+  const all = [];
+  for (const row of tiles.value) for (const t of row.tiles) all.push(t);
+  const picks = all.sort(() => Math.random() - 0.5).slice(0, 5);
+  for (const p of picks) p.value = generateTileValue();
+  economy.value.coins -= 10;
+  economy.value.spentCoins += 10;
+  showDeadBoardModal.value = false;
+}
+function mockBuyCoins() { economy.value.coins += 50; showCoinsModal.value = false; }
+function watchAdCoins() { economy.value.coins += 10; showCoinsModal.value = false; }
+function confirmReset() { restartGame(); }
+function convertScoreToCoins() {
+  const coins = Math.floor(score.value / 1000);
+  if (coins <= 0) return;
+  score.value -= coins * 1000;
+  economy.value.coins += coins;
 }
 
 function closePopup() { showPopup.value = false; }
@@ -732,7 +826,11 @@ onBeforeUnmount(() => {
   clearSelectionState();
 });
 
-watch([score, bestTile], () => saveGame());
+watch([score, bestTile], () => {
+  economy.value.totalScore = (economy.value.totalScore || 0) + 0;
+  if (!hasAnyValidMove()) showDeadBoardModal.value = true;
+  saveGame();
+});
 watch(
   () => tiles.value.map(r => r.tiles.map(t => t.value)),
   () => scheduleSave(),
@@ -802,6 +900,8 @@ function mountNumber(val) {
 .top-chip-level { min-width:156px; justify-content:center; padding:6px 14px; }
 .mini-add { border:0; border-radius:8px; width:26px; height:26px; background:#6ed21f; color:#fff; font-weight:800; }
 .hud-score { text-align:center; font-size: clamp(28px, 7vw, 52px); color:#fff; font-weight:800; letter-spacing:.5px; line-height:1; margin:0; }
+.hud-actions { display:flex; gap:6px; }
+.hud-mini-btn { flex:1; min-height:30px; border-radius:10px; border:1px solid rgba(255,255,255,.22); background:rgba(19,35,105,.55); color:#fff; font-size:12px; font-weight:700; }
 .hud-topbar { display: flex; gap: 8px; align-items: center; width: 100%; }
 .hidden-meta { display:none; }
 .hud-item { background: rgba(255,255,255,0.06); backdrop-filter: blur(10px); border: 1px solid rgba(255,215,0,0.15); border-radius: 12px; padding: 6px 12px; display: flex; flex-direction: column; flex: 1; min-width: 0; }
@@ -997,3 +1097,4 @@ function mountNumber(val) {
 @media (max-width: 400px) { .game-container { padding: 4px; gap: 3px; } .board { padding: 6px; } .hud-item { padding: 4px 8px; } .hud-value { font-size: 14px; } .restart-btn, .sound-btn, .game-back-btn { width: 34px; height: 34px; } .board-row { gap: 7px; margin-bottom: 7px; } .selection-svg { top: 6px; left: 6px; right: 6px; bottom: 6px; }  .selection-glow-layer { stroke-width: 6; } .selection-path { stroke-width: 3; } .hud-topbar { gap: 4px; } .objective-label{font-size:11px;} }
 @media (min-width: 600px) { .game-container { max-width: 440px; gap: 8px; padding: 10px; } .board { padding: 10px; } .hud-value { font-size: 22px; } .restart-btn, .sound-btn, .game-back-btn { width: 48px; height: 48px; } .board-row { gap: 10px; margin-bottom: 10px; } .selection-svg { top: 10px; left: 10px; right: 10px; bottom: 10px; }  .selection-glow-layer { stroke-width: 8; } .selection-path { stroke-width: 4; } .hud-topbar { gap: 6px; } }
 </style>
+  safeBottom.value = Number.parseInt(getComputedStyle(document.documentElement).getPropertyValue("env(safe-area-inset-bottom)")) || 0;
