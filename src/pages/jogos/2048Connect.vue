@@ -734,7 +734,7 @@ function mountNumber(val) {
   padding-top: env(safe-area-inset-top, 0);
   padding-bottom: env(safe-area-inset-bottom, 0);
 }
-.game-container {
+ .game-container {
   display: flex;
   flex-direction: column;
   align-items: center;
