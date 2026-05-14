@@ -12,7 +12,7 @@
           <div class="top-chip top-chip-level">👑 Level 14</div>
         </div>
         <div class="hud-score">{{ score.toLocaleString() }}</div>
-        <div class="hud-topbar">
+        <div class="hud-topbar hidden-meta">
           <button class="game-back-btn" @click="goBack" title="Back">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
               <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
@@ -179,14 +179,14 @@ const objectivePercent = computed(() => Math.max(0, Math.min(100, Math.round((hi
 const { height: winH, width: winW } = useWindowSize();
 const tileSize = computed(() => {
   const vh = winH.value;
-  const vw = Math.min(winW.value - 16, 400);
+  const vw = Math.min(winW.value - 20, 430);
   const isSmall = vw < 400;
   const isLarge = vw > 600;
-  const hudH = isSmall ? 56 : 66;
+  const hudH = isSmall ? 118 : 130;
   const containerPadV = isSmall ? 8 : 12;
-  const containerPadH = isSmall ? 8 : 16;
-  const boardPad = isSmall ? 6 : 8;
-  const gap = isSmall ? 3 : isLarge ? 5 : 4;
+  const containerPadH = isSmall ? 10 : 14;
+  const boardPad = isSmall ? 7 : 9;
+  const gap = isSmall ? 5 : isLarge ? 6 : 5;
   const rowGap = (ROWS - 1) * gap;
   const colGap = (COLS - 1) * gap;
   const containerGap = isSmall ? 4 : 6;
@@ -738,8 +738,8 @@ function mountNumber(val) {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
+  gap: 10px;
+  padding: 10px 10px 8px;
   width: 100%;
   max-width: 400px;
   height: 100dvh;
@@ -750,34 +750,35 @@ function mountNumber(val) {
 }
 
 /* HUD */
-.hud { width: 100%; display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; }
-.hud-topline { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:2px; }
-.top-chip { display:flex; align-items:center; gap:8px; padding:6px 10px; border-radius:12px; background:rgba(58,94,198,.55); border:1px solid rgba(255,255,255,.2); color:#fff; font-weight:700; }
-.top-chip-level { padding:6px 14px; }
-.mini-add { border:0; border-radius:8px; width:24px; height:24px; background:#6ed21f; color:#fff; font-weight:800; }
-.hud-score { text-align:center; font-size: clamp(28px, 5vw, 56px); color:#fff; font-weight:800; letter-spacing:1px; line-height:1; margin:4px 0; }
-.hud-topbar { display: flex; gap: 6px; align-items: center; width: 100%; }
+.hud { width: 100%; display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
+.hud-topline { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:0; min-height:40px; }
+.top-chip { min-width:124px; display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 10px; border-radius:12px; background:linear-gradient(180deg, rgba(38,74,173,.95), rgba(29,55,131,.95)); border:1px solid rgba(255,255,255,.2); color:#fff; font-weight:700; box-shadow: inset 0 1px 0 rgba(255,255,255,.2); }
+.top-chip-level { min-width:156px; justify-content:center; padding:6px 14px; }
+.mini-add { border:0; border-radius:8px; width:26px; height:26px; background:#6ed21f; color:#fff; font-weight:800; }
+.hud-score { text-align:center; font-size: clamp(36px, 7vw, 58px); color:#fff; font-weight:800; letter-spacing:1px; line-height:1; margin:2px 0 0; }
+.hud-topbar { display: flex; gap: 8px; align-items: center; width: 100%; }
+.hidden-meta { display:none; }
 .hud-item { background: rgba(255,255,255,0.06); backdrop-filter: blur(10px); border: 1px solid rgba(255,215,0,0.15); border-radius: 12px; padding: 6px 12px; display: flex; flex-direction: column; flex: 1; min-width: 0; }
 .hud-label { font-size: 9px; text-transform: uppercase; letter-spacing: 1px; color: rgba(255,215,0,0.6); font-weight: 600; }
 .hud-value { font-size: 18px; font-weight: 800; color: #fff; line-height: 1.2; }
 .restart-btn, .sound-btn, .game-back-btn { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,215,0,0.2); border-radius: 12px; color: rgba(255,215,0,0.7); width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.2s ease; flex-shrink: 0; }
 .restart-btn:hover, .sound-btn:hover, .game-back-btn:hover { background: rgba(255,215,0,0.15); color: #ffd700; }
 .restart-btn:hover { transform: rotate(30deg); }
-.objective-row { display: flex; align-items: center; gap: 6px; }
-.objective-label { font-size: 11px; color: rgba(255,215,0,0.8); font-weight: 700; white-space: nowrap; letter-spacing: 0.4px; }
-.progress-track { flex: 1; height: 3px; background: rgba(255,255,255,0.1); border-radius: 2px; overflow: hidden; }
+.objective-row { display: flex; align-items: center; gap: 10px; min-height:46px; }
+.objective-label { font-size: 12px; color: rgba(255,255,255,0.95); font-weight: 700; white-space: nowrap; letter-spacing: 0.3px; }
+.progress-track { flex: 1; height: 10px; background: rgba(44,77,177,0.65); border-radius: 999px; overflow: hidden; }
 .progress-fill { height: 100%; background: linear-gradient(90deg, #ffd700, #ff8c00); border-radius: 2px; transition: width 0.4s ease; }
 .objective-pct { font-size: 10px; color: rgba(255,215,0,0.5); font-weight: 700; min-width: 28px; text-align: right; }
 
 /* BOARD — geometry-based hit detection (no elementFromPoint) */
 .board {
   position: relative;
-  max-height: calc(100dvh - 130px);
+  max-height: calc(100dvh - 228px);
   background: rgba(255,255,255,0.04);
   backdrop-filter: blur(6px);
   border: 1px solid rgba(255,215,0,0.1);
-  border-radius: 14px;
-  padding: 4px;
+  border-radius: 20px;
+  padding: 8px;
   box-shadow: 0 20px 60px rgba(0,0,0,0.5), 0 0 40px rgba(255,215,0,0.03), inset 0 1px 0 rgba(255,255,255,0.05);
   touch-action: none;
   align-self: center;
@@ -785,12 +786,12 @@ function mountNumber(val) {
   user-select: none;
   -webkit-user-select: none;
 }
-.bottom-tools { width:100%; display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-top:4px; }
-.tool-btn { height:50px; border-radius:12px; border:1px solid rgba(255,255,255,.35); background:rgba(15,27,95,.55); color:#fff; font-size:24px; }
-.board-row { display: flex; gap: 4px; justify-content: center; }
+.bottom-tools { width:100%; display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-top:2px; }
+.tool-btn { height:56px; border-radius:12px; border:1px solid rgba(255,255,255,.5); background:rgba(15,27,95,.55); color:#fff; font-size:24px; }
+.board-row { display: flex; gap: 5px; justify-content: center; }
 .tile { width: var(--ts); height: var(--ts); flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
-.tile-inner { width: 100%; height: 100%; border-radius: 8px; display: flex; align-items: center; justify-content: center; cursor: pointer; position: relative; z-index: 1; }
-.tile-empty { width: 100%; height: 100%; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.03); border-radius: 8px; }
+.tile-inner { width: 100%; height: 100%; border-radius: 14px; display: flex; align-items: center; justify-content: center; cursor: pointer; position: relative; z-index: 1; }
+.tile-empty { width: 100%; height: 100%; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.04); border-radius: 14px; }
 .tile-text { font-weight: 900; text-shadow: 0 1px 2px rgba(0,0,0,0.15); line-height: 1; letter-spacing: -0.5px; pointer-events: none; }
 
 /* SVG selection connector */
