@@ -47,7 +47,7 @@
         class="board"
         :style="{ '--ts': tileSize + 'px' }"
       >
-        <svg class="selection-svg" v-if="selectionIds.length >= 2" :viewBox="svgViewBox">
+        <svg class="selection-svg" v-if="selectionIds.length >= 2 || dragPoint.visible" :viewBox="svgViewBox">
           <defs>
             <linearGradient id="lineGrad" x1="0%" y1="0%" x2="100%" y2="100%">
               <stop offset="0%" stop-color="#ffd700" />
@@ -70,6 +70,8 @@
           <path :d="svgPath" class="selection-glow-layer" />
           <path :d="svgPath" class="selection-path" />
           <path :d="svgPath" class="selection-flow" />
+          <path v-if="dragTailPath" :d="dragTailPath" class="selection-tail" />
+          <circle v-if="dragPoint.visible" :cx="dragPoint.x" :cy="dragPoint.y" class="selection-drag-head" />
           <circle
             v-for="(pt, idx) in svgPoints"
             :key="idx"
@@ -100,11 +102,15 @@
           </div>
         </div>
       </div>
-      <div class="bottom-tools">
-        <button class="tool-btn">↩</button>
-        <button class="tool-btn">📣</button>
-        <button class="tool-btn">🛒</button>
-        <button class="tool-btn">⏸</button>
+      <div class="floating-score-layer" aria-hidden="true">
+        <div
+          v-for="pop in floatingScores"
+          :key="pop.id"
+          class="floating-score"
+          :style="{ left: `${pop.x}px`, top: `${pop.y}px` }"
+        >
+          +{{ mountNumber(pop.value).val }}
+        </div>
       </div>
 
       <Teleport to="body">
@@ -145,8 +151,8 @@ const chainDebug = ref([]);
 const lastMergeResult = ref(0);
 
 // ==================== CONSTANTS ====================
-const ROWS = 14;
-const COLS = 7;
+const ROWS = 9;
+const COLS = 5;
 
 // ==================== STORAGE ====================
 const savedGame = useStorage("2048connect-save", null);
@@ -171,6 +177,10 @@ let isDragging = false;
 const svgPath = ref("");
 const svgPoints = ref([]);
 const svgViewBox = ref("0 0 1 1");
+const dragTailPath = ref("");
+const dragPoint = ref({ x: 0, y: 0, visible: false });
+const floatingScores = ref([]);
+let floatingScoreId = 0;
 
 const highestTile = computed(() => bestTile.value || 2);
 const nextObjective = computed(() => { let v = 2048; while (v <= highestTile.value) v *= 2; return v; });
@@ -179,18 +189,17 @@ const objectivePercent = computed(() => Math.max(0, Math.min(100, Math.round((hi
 const { height: winH, width: winW } = useWindowSize();
 const tileSize = computed(() => {
   const vh = winH.value;
-  const vw = Math.min(winW.value - 20, 430);
+  const vw = Math.min(winW.value - 12, 430);
   const isSmall = vw < 400;
-  const isLarge = vw > 600;
-  const hudH = isSmall ? 118 : 130;
-  const containerPadV = isSmall ? 8 : 12;
-  const containerPadH = isSmall ? 10 : 14;
-  const boardPad = isSmall ? 7 : 9;
-  const gap = isSmall ? 5 : isLarge ? 6 : 5;
+  const hudH = isSmall ? 96 : 106;
+  const containerPadV = isSmall ? 4 : 8;
+  const containerPadH = isSmall ? 6 : 8;
+  const boardPad = isSmall ? 8 : 10;
+  const gap = isSmall ? 8 : 9;
   const rowGap = (ROWS - 1) * gap;
   const colGap = (COLS - 1) * gap;
-  const containerGap = isSmall ? 4 : 6;
-  const safety = isSmall ? 12 : 16;
+  const containerGap = isSmall ? 2 : 4;
+  const safety = isSmall ? 8 : 10;
   const availH = vh - hudH - containerPadV - boardPad - rowGap - containerGap - safety;
   const availW = vw - containerPadH - boardPad - colGap;
   return Math.max(16, Math.floor(Math.min(availW / COLS, availH / ROWS)));
@@ -399,6 +408,8 @@ function clearSelectionState() {
   isDragging = false;
   svgPath.value = "";
   svgPoints.value = [];
+  dragTailPath.value = "";
+  dragPoint.value = { x: 0, y: 0, visible: false };
 }
 
 function startSelection(id) {
@@ -514,6 +525,7 @@ function endSelection() {
         lastData.active = false;
         lastData.animState = "merge";
         clearAnim(lastData);
+        spawnFloatingScore(lastId, finalValue);
       }
       score.value += finalValue;
       gameStats.value = {
@@ -536,6 +548,8 @@ function endSelection() {
   selectionIds = [];
   svgPath.value = "";
   svgPoints.value = [];
+  dragTailPath.value = "";
+  dragPoint.value = { x: 0, y: 0, visible: false };
 }
 
 // ==================== BOARD ENGINE ====================
@@ -571,6 +585,7 @@ function onPointerDown(e) {
 
 function onPointerMove(e) {
   if (!isDragging) return;
+  updateDragVisual(e.clientX, e.clientY);
   const tile = getTileFromPosition(e.clientX, e.clientY);
   if (!tile || tile.value <= 0) return;
   if (selectionIds.includes(tile.id)) handleDeselect(tile.id);
@@ -664,6 +679,37 @@ function supportProject() {
   closePopup();
 }
 
+function updateDragVisual(clientX, clientY) {
+  const rect = getBoardRect();
+  if (!rect) return;
+  const pad = getBoardPadding();
+  const localX = Math.max(0, Math.min(rect.width - pad * 2, clientX - rect.left - pad));
+  const localY = Math.max(0, Math.min(rect.height - pad * 2, clientY - rect.top - pad));
+  dragPoint.value = { x: localX, y: localY, visible: true };
+  const last = svgPoints.value[svgPoints.value.length - 1];
+  if (!last) {
+    dragTailPath.value = "";
+    return;
+  }
+  const dx = localX - last.x;
+  const dy = localY - last.y;
+  const ctrlX = last.x + dx * 0.55;
+  const ctrlY = last.y + dy * 0.55;
+  dragTailPath.value = `M ${last.x},${last.y} Q ${ctrlX},${ctrlY} ${localX},${localY}`;
+}
+
+function spawnFloatingScore(tileId, value) {
+  const pos = getTileRowCol(tileId);
+  if (!pos) return;
+  const g = getTileGeometry(pos.row, pos.col);
+  if (!g) return;
+  const id = ++floatingScoreId;
+  floatingScores.value.push({ id, value, x: g.cx, y: g.top + 8 });
+  setTimeout(() => {
+    floatingScores.value = floatingScores.value.filter((s) => s.id !== id);
+  }, 700);
+}
+
 // ==================== INIT ====================
 
 tiles.value = createBoard();
@@ -738,8 +784,8 @@ function mountNumber(val) {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
-  padding: 10px 10px 8px;
+  gap: 6px;
+  padding: 6px 6px 4px;
   width: 100%;
   max-width: 400px;
   height: 100dvh;
@@ -750,12 +796,12 @@ function mountNumber(val) {
 }
 
 /* HUD */
-.hud { width: 100%; display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
-.hud-topline { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:0; min-height:40px; }
+.hud { width: 100%; display: flex; flex-direction: column; gap: 5px; flex-shrink: 0; }
+.hud-topline { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:0; min-height:36px; }
 .top-chip { min-width:124px; display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 10px; border-radius:12px; background:linear-gradient(180deg, rgba(38,74,173,.95), rgba(29,55,131,.95)); border:1px solid rgba(255,255,255,.2); color:#fff; font-weight:700; box-shadow: inset 0 1px 0 rgba(255,255,255,.2); }
 .top-chip-level { min-width:156px; justify-content:center; padding:6px 14px; }
 .mini-add { border:0; border-radius:8px; width:26px; height:26px; background:#6ed21f; color:#fff; font-weight:800; }
-.hud-score { text-align:center; font-size: clamp(36px, 7vw, 58px); color:#fff; font-weight:800; letter-spacing:1px; line-height:1; margin:2px 0 0; }
+.hud-score { text-align:center; font-size: clamp(28px, 7vw, 52px); color:#fff; font-weight:800; letter-spacing:.5px; line-height:1; margin:0; }
 .hud-topbar { display: flex; gap: 8px; align-items: center; width: 100%; }
 .hidden-meta { display:none; }
 .hud-item { background: rgba(255,255,255,0.06); backdrop-filter: blur(10px); border: 1px solid rgba(255,215,0,0.15); border-radius: 12px; padding: 6px 12px; display: flex; flex-direction: column; flex: 1; min-width: 0; }
@@ -764,7 +810,7 @@ function mountNumber(val) {
 .restart-btn, .sound-btn, .game-back-btn { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,215,0,0.2); border-radius: 12px; color: rgba(255,215,0,0.7); width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.2s ease; flex-shrink: 0; }
 .restart-btn:hover, .sound-btn:hover, .game-back-btn:hover { background: rgba(255,215,0,0.15); color: #ffd700; }
 .restart-btn:hover { transform: rotate(30deg); }
-.objective-row { display: flex; align-items: center; gap: 10px; min-height:46px; }
+.objective-row { display: flex; align-items: center; gap: 8px; min-height:36px; }
 .objective-label { font-size: 12px; color: rgba(255,255,255,0.95); font-weight: 700; white-space: nowrap; letter-spacing: 0.3px; }
 .progress-track { flex: 1; height: 10px; background: rgba(44,77,177,0.65); border-radius: 999px; overflow: hidden; }
 .progress-fill { height: 100%; background: linear-gradient(90deg, #ffd700, #ff8c00); border-radius: 2px; transition: width 0.4s ease; }
@@ -773,47 +819,45 @@ function mountNumber(val) {
 /* BOARD — geometry-based hit detection (no elementFromPoint) */
 .board {
   position: relative;
-  max-height: calc(100dvh - 228px);
-  background: rgba(255,255,255,0.04);
-  backdrop-filter: blur(6px);
-  border: 1px solid rgba(255,215,0,0.1);
-  border-radius: 20px;
+  max-height: calc(100dvh - 154px);
+  background: rgba(22, 38, 109, 0.38);
+  backdrop-filter: blur(4px);
+  border: 1px solid rgba(167,200,255,0.2);
+  border-radius: 18px;
   padding: 8px;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.5), 0 0 40px rgba(255,215,0,0.03), inset 0 1px 0 rgba(255,255,255,0.05);
+  box-shadow: 0 10px 26px rgba(4,10,40,0.42), inset 0 1px 0 rgba(255,255,255,0.1);
   touch-action: none;
   align-self: center;
   overflow: hidden;
   user-select: none;
   -webkit-user-select: none;
 }
-.bottom-tools { width:100%; display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-top:2px; }
-.tool-btn { height:56px; border-radius:12px; border:1px solid rgba(255,255,255,.5); background:rgba(15,27,95,.55); color:#fff; font-size:24px; }
-.board-row { display: flex; gap: 5px; justify-content: center; }
+.board-row { display: flex; gap: 9px; justify-content: center; margin-bottom: 9px; }
 .tile { width: var(--ts); height: var(--ts); flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
 .tile-inner { width: 100%; height: 100%; border-radius: 14px; display: flex; align-items: center; justify-content: center; cursor: pointer; position: relative; z-index: 1; }
-.tile-empty { width: 100%; height: 100%; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.04); border-radius: 14px; }
+.tile-empty { width: 100%; height: 100%; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.06); border-radius: 14px; }
 .tile-text { font-weight: 900; text-shadow: 0 1px 2px rgba(0,0,0,0.15); line-height: 1; letter-spacing: -0.5px; pointer-events: none; }
 
 /* SVG selection connector */
 .selection-svg { position: absolute; top: 8px; left: 8px; right: 8px; bottom: 8px; pointer-events: none; z-index: 5; overflow: visible; }
 
-.selection-glow-layer {
+ .selection-glow-layer {
   stroke: rgba(255, 180, 50, 0.35);
-  stroke-width: 14;
+  stroke-width: 9;
   fill: none;
   stroke-linecap: round;
   stroke-linejoin: round;
   filter: url(#lineGlow);
-  animation: glowPulse 1.2s ease-in-out infinite alternate;
+  animation: glowPulse 0.9s ease-in-out infinite alternate;
 }
 
 .selection-path {
   stroke: url(#lineGrad);
-  stroke-width: 5;
+  stroke-width: 4;
   fill: none;
   stroke-linecap: round;
   stroke-linejoin: round;
-  filter: drop-shadow(0 0 4px rgba(255, 200, 50, 0.5));
+  filter: drop-shadow(0 0 3px rgba(255, 200, 50, 0.35));
 }
 
 .selection-flow {
@@ -824,6 +868,19 @@ function mountNumber(val) {
   stroke-linejoin: round;
   stroke-dasharray: 6 10;
   animation: flowMove 0.6s linear infinite;
+}
+.selection-tail {
+  stroke: rgba(255, 224, 126, 0.9);
+  stroke-width: 5;
+  fill: none;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 5px rgba(255, 193, 61, 0.35));
+  animation: tailPulse .55s ease-in-out infinite alternate;
+}
+.selection-drag-head {
+  fill: rgba(255, 255, 255, 0.9);
+  r: 4;
+  filter: drop-shadow(0 0 6px rgba(255, 208, 98, .55));
 }
 
 .selection-node {
@@ -845,6 +902,10 @@ function mountNumber(val) {
 @keyframes nodePulse {
   from { r: 3; opacity: 0.5; }
   to { r: 5.5; opacity: 1; }
+}
+@keyframes tailPulse {
+  from { opacity: .65; stroke-width: 7; }
+  to { opacity: 1; stroke-width: 10; }
 }
 
 /* Tile value colors */
@@ -873,16 +934,15 @@ function mountNumber(val) {
 .tile-val-4096 .tile-inner, .tile-val-8192 .tile-inner, .tile-val-16384 .tile-inner { background: linear-gradient(135deg, #ff6b9d 0%, #e85080 100%); box-shadow: 0 2px 14px rgba(230,60,120,0.5), 0 0 30px rgba(255,107,157,0.3), inset 0 1px 0 rgba(255,255,255,0.2); }
 .tile-val-4096 .tile-text, .tile-val-8192 .tile-text, .tile-val-16384 .tile-text { color: #fff; }
 
-/* Selection — enhanced glow with energy feel */
+/* Selection — subtle and clear */
 .tile-selected { z-index: 10; }
 .tile-selected .tile-inner {
-  animation: tileGlow 0.6s ease-in-out infinite alternate;
+  animation: tileGlow 0.45s ease-in-out infinite alternate;
   box-shadow:
-    0 0 16px rgba(255, 200, 50, 0.35),
-    0 0 32px rgba(255, 200, 50, 0.15),
-    0 0 48px rgba(255, 180, 0, 0.08) !important;
-  transform: scale(1.05);
-  border: 2px solid rgba(255, 215, 0, 0.5);
+    0 0 8px rgba(255, 200, 50, 0.22),
+    0 0 14px rgba(255, 200, 50, 0.1) !important;
+  transform: scale(1.035);
+  border: 2px solid rgba(255, 215, 0, 0.35);
   position: relative;
 }
 
@@ -893,12 +953,12 @@ function mountNumber(val) {
 .tile-invalid .tile-inner { animation: tileShake 0.35s ease; box-shadow: 0 0 10px rgba(255,50,50,0.35) !important; }
 
 @keyframes tileGlow {
-  from { transform: scale(1.03); box-shadow: 0 0 14px rgba(255,200,50,0.3), 0 0 28px rgba(255,200,50,0.12); }
-  to { transform: scale(1.06); box-shadow: 0 0 24px rgba(255,200,50,0.45), 0 0 48px rgba(255,200,50,0.2), 0 0 64px rgba(255,180,0,0.1); }
+  from { transform: scale(1.02); box-shadow: 0 0 6px rgba(255,200,50,0.2); }
+  to { transform: scale(1.04); box-shadow: 0 0 12px rgba(255,200,50,0.3); }
 }
 @keyframes tileDrop { from { transform: translateY(-60px); opacity: 0.4; } 70% { opacity: 1; } to { transform: translateY(0); opacity: 1; } }
 @keyframes tileAppear { from { transform: scale(0) rotate(-10deg); opacity: 0; } 60% { transform: scale(1.15) rotate(2deg); opacity: 1; } to { transform: scale(1) rotate(0deg); opacity: 1; } }
-@keyframes tileMerge { 0% { transform: scale(1); } 40% { transform: scale(1.3); box-shadow: 0 0 25px rgba(255,215,0,0.5), 0 0 50px rgba(255,215,0,0.25); } 100% { transform: scale(1); } }
+@keyframes tileMerge { 0% { transform: scale(1); } 45% { transform: scale(1.13); box-shadow: 0 0 16px rgba(255,215,0,0.35); } 100% { transform: scale(1); } }
 @keyframes tileDeselect { from { transform: scale(1.03); opacity: 1; } to { transform: scale(0.9); opacity: 0.6; } }
 @keyframes tileShake { 0%,100% { transform: translateX(0); } 15% { transform: translateX(-4px); } 30% { transform: translateX(4px); } 45% { transform: translateX(-3px); } 60% { transform: translateX(3px); } 75% { transform: translateX(-2px); } 90% { transform: translateX(2px); } }
 
@@ -918,7 +978,22 @@ function mountNumber(val) {
 @keyframes popupFadeIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes popupSlide { from { transform: translateY(40px) scale(0.95); opacity: 0; } to { transform: translateY(0) scale(1); opacity: 1; } }
 
+.floating-score-layer { position: fixed; inset: 0; pointer-events: none; z-index: 20; }
+.floating-score {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  color: #eaf5ff;
+  font-size: clamp(16px, 3.8vw, 24px);
+  font-weight: 900;
+  text-shadow: 0 2px 6px rgba(9,14,35,0.8), 0 0 18px rgba(255,218,98,0.6);
+  animation: floatScore .45s ease-out forwards;
+}
+@keyframes floatScore {
+  from { opacity: 0; transform: translate(-50%, -20%) scale(0.6); }
+  20% { opacity: 1; transform: translate(-50%, -55%) scale(1.04); }
+  to { opacity: 0; transform: translate(-50%, -120%) scale(1); }
+}
 /* Responsive */
-@media (max-width: 400px) { .game-container { padding: 4px; gap: 4px; } .board { padding: 3px; } .hud-item { padding: 4px 8px; } .hud-value { font-size: 14px; } .restart-btn, .sound-btn, .game-back-btn { width: 34px; height: 34px; } .board-row { gap: 3px; } .selection-svg { top: 3px; left: 3px; right: 3px; bottom: 3px; } .selection-glow-layer { stroke-width: 6; } .selection-path { stroke-width: 3; } .hud-topbar { gap: 4px; } }
-@media (min-width: 600px) { .game-container { max-width: 440px; gap: 8px; padding: 10px; } .board { padding: 6px; } .hud-value { font-size: 22px; } .restart-btn, .sound-btn, .game-back-btn { width: 48px; height: 48px; } .board-row { gap: 5px; } .selection-svg { top: 6px; left: 6px; right: 6px; bottom: 6px; } .selection-glow-layer { stroke-width: 12; } .selection-path { stroke-width: 5; } .hud-topbar { gap: 6px; } }
+@media (max-width: 400px) { .game-container { padding: 4px; gap: 3px; } .board { padding: 6px; } .hud-item { padding: 4px 8px; } .hud-value { font-size: 14px; } .restart-btn, .sound-btn, .game-back-btn { width: 34px; height: 34px; } .board-row { gap: 7px; margin-bottom: 7px; } .selection-svg { top: 6px; left: 6px; right: 6px; bottom: 6px; }  .selection-glow-layer { stroke-width: 6; } .selection-path { stroke-width: 3; } .hud-topbar { gap: 4px; } .objective-label{font-size:11px;} }
+@media (min-width: 600px) { .game-container { max-width: 440px; gap: 8px; padding: 10px; } .board { padding: 10px; } .hud-value { font-size: 22px; } .restart-btn, .sound-btn, .game-back-btn { width: 48px; height: 48px; } .board-row { gap: 10px; margin-bottom: 10px; } .selection-svg { top: 10px; left: 10px; right: 10px; bottom: 10px; }  .selection-glow-layer { stroke-width: 8; } .selection-path { stroke-width: 4; } .hud-topbar { gap: 6px; } }
 </style>
