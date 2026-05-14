@@ -47,7 +47,7 @@
         class="board"
         :style="{ '--ts': tileSize + 'px' }"
       >
-        <svg class="selection-svg" v-if="selectionIds.length >= 2" :viewBox="svgViewBox">
+        <svg class="selection-svg" v-if="selectionIds.length >= 2 || dragPoint.visible" :viewBox="svgViewBox">
           <defs>
             <linearGradient id="lineGrad" x1="0%" y1="0%" x2="100%" y2="100%">
               <stop offset="0%" stop-color="#ffd700" />
@@ -70,6 +70,8 @@
           <path :d="svgPath" class="selection-glow-layer" />
           <path :d="svgPath" class="selection-path" />
           <path :d="svgPath" class="selection-flow" />
+          <path v-if="dragTailPath" :d="dragTailPath" class="selection-tail" />
+          <circle v-if="dragPoint.visible" :cx="dragPoint.x" :cy="dragPoint.y" class="selection-drag-head" />
           <circle
             v-for="(pt, idx) in svgPoints"
             :key="idx"
@@ -98,6 +100,16 @@
               <span class="tile-text">{{ mountNumber(col.value).val }}</span>
             </div>
           </div>
+        </div>
+      </div>
+      <div class="floating-score-layer" aria-hidden="true">
+        <div
+          v-for="pop in floatingScores"
+          :key="pop.id"
+          class="floating-score"
+          :style="{ left: `${pop.x}px`, top: `${pop.y}px` }"
+        >
+          +{{ mountNumber(pop.value).val }}
         </div>
       </div>
       <div class="bottom-tools">
@@ -171,6 +183,10 @@ let isDragging = false;
 const svgPath = ref("");
 const svgPoints = ref([]);
 const svgViewBox = ref("0 0 1 1");
+const dragTailPath = ref("");
+const dragPoint = ref({ x: 0, y: 0, visible: false });
+const floatingScores = ref([]);
+let floatingScoreId = 0;
 
 const highestTile = computed(() => bestTile.value || 2);
 const nextObjective = computed(() => { let v = 2048; while (v <= highestTile.value) v *= 2; return v; });
@@ -399,6 +415,8 @@ function clearSelectionState() {
   isDragging = false;
   svgPath.value = "";
   svgPoints.value = [];
+  dragTailPath.value = "";
+  dragPoint.value = { x: 0, y: 0, visible: false };
 }
 
 function startSelection(id) {
@@ -514,6 +532,7 @@ function endSelection() {
         lastData.active = false;
         lastData.animState = "merge";
         clearAnim(lastData);
+        spawnFloatingScore(lastId, finalValue);
       }
       score.value += finalValue;
       gameStats.value = {
@@ -536,6 +555,8 @@ function endSelection() {
   selectionIds = [];
   svgPath.value = "";
   svgPoints.value = [];
+  dragTailPath.value = "";
+  dragPoint.value = { x: 0, y: 0, visible: false };
 }
 
 // ==================== BOARD ENGINE ====================
@@ -571,6 +592,7 @@ function onPointerDown(e) {
 
 function onPointerMove(e) {
   if (!isDragging) return;
+  updateDragVisual(e.clientX, e.clientY);
   const tile = getTileFromPosition(e.clientX, e.clientY);
   if (!tile || tile.value <= 0) return;
   if (selectionIds.includes(tile.id)) handleDeselect(tile.id);
@@ -662,6 +684,37 @@ function closePopup() { showPopup.value = false; }
 
 function supportProject() {
   closePopup();
+}
+
+function updateDragVisual(clientX, clientY) {
+  const rect = getBoardRect();
+  if (!rect) return;
+  const pad = getBoardPadding();
+  const localX = Math.max(0, Math.min(rect.width - pad * 2, clientX - rect.left - pad));
+  const localY = Math.max(0, Math.min(rect.height - pad * 2, clientY - rect.top - pad));
+  dragPoint.value = { x: localX, y: localY, visible: true };
+  const last = svgPoints.value[svgPoints.value.length - 1];
+  if (!last) {
+    dragTailPath.value = "";
+    return;
+  }
+  const dx = localX - last.x;
+  const dy = localY - last.y;
+  const ctrlX = last.x + dx * 0.55;
+  const ctrlY = last.y + dy * 0.55;
+  dragTailPath.value = `M ${last.x},${last.y} Q ${ctrlX},${ctrlY} ${localX},${localY}`;
+}
+
+function spawnFloatingScore(tileId, value) {
+  const pos = getTileRowCol(tileId);
+  if (!pos) return;
+  const g = getTileGeometry(pos.row, pos.col);
+  if (!g) return;
+  const id = ++floatingScoreId;
+  floatingScores.value.push({ id, value, x: g.cx, y: g.top + 8 });
+  setTimeout(() => {
+    floatingScores.value = floatingScores.value.filter((s) => s.id !== id);
+  }, 700);
 }
 
 // ==================== INIT ====================
@@ -774,12 +827,12 @@ function mountNumber(val) {
 .board {
   position: relative;
   max-height: calc(100dvh - 228px);
-  background: rgba(255,255,255,0.04);
-  backdrop-filter: blur(6px);
-  border: 1px solid rgba(255,215,0,0.1);
-  border-radius: 20px;
-  padding: 8px;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.5), 0 0 40px rgba(255,215,0,0.03), inset 0 1px 0 rgba(255,255,255,0.05);
+  background: linear-gradient(180deg, rgba(28,44,122,0.5), rgba(13,22,75,0.56));
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(158,199,255,0.23);
+  border-radius: 24px;
+  padding: 10px;
+  box-shadow: 0 26px 60px rgba(0,0,0,0.52), inset 0 2px 0 rgba(255,255,255,0.12), inset 0 -8px 24px rgba(7,14,53,0.55);
   touch-action: none;
   align-self: center;
   overflow: hidden;
@@ -788,10 +841,10 @@ function mountNumber(val) {
 }
 .bottom-tools { width:100%; display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-top:2px; }
 .tool-btn { height:56px; border-radius:12px; border:1px solid rgba(255,255,255,.5); background:rgba(15,27,95,.55); color:#fff; font-size:24px; }
-.board-row { display: flex; gap: 5px; justify-content: center; }
+.board-row { display: flex; gap: 8px; justify-content: center; }
 .tile { width: var(--ts); height: var(--ts); flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
-.tile-inner { width: 100%; height: 100%; border-radius: 14px; display: flex; align-items: center; justify-content: center; cursor: pointer; position: relative; z-index: 1; }
-.tile-empty { width: 100%; height: 100%; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.04); border-radius: 14px; }
+.tile-inner { width: 100%; height: 100%; border-radius: 16px; display: flex; align-items: center; justify-content: center; cursor: pointer; position: relative; z-index: 1; }
+.tile-empty { width: 100%; height: 100%; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; }
 .tile-text { font-weight: 900; text-shadow: 0 1px 2px rgba(0,0,0,0.15); line-height: 1; letter-spacing: -0.5px; pointer-events: none; }
 
 /* SVG selection connector */
@@ -825,6 +878,19 @@ function mountNumber(val) {
   stroke-dasharray: 6 10;
   animation: flowMove 0.6s linear infinite;
 }
+.selection-tail {
+  stroke: rgba(255, 224, 126, 0.9);
+  stroke-width: 8;
+  fill: none;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 14px rgba(255, 193, 61, 0.7));
+  animation: tailPulse .55s ease-in-out infinite alternate;
+}
+.selection-drag-head {
+  fill: rgba(255, 255, 255, 0.9);
+  r: 7;
+  filter: drop-shadow(0 0 18px rgba(255, 208, 98, 1));
+}
 
 .selection-node {
   fill: #ffd700;
@@ -845,6 +911,10 @@ function mountNumber(val) {
 @keyframes nodePulse {
   from { r: 3; opacity: 0.5; }
   to { r: 5.5; opacity: 1; }
+}
+@keyframes tailPulse {
+  from { opacity: .65; stroke-width: 7; }
+  to { opacity: 1; stroke-width: 10; }
 }
 
 /* Tile value colors */
@@ -898,7 +968,7 @@ function mountNumber(val) {
 }
 @keyframes tileDrop { from { transform: translateY(-60px); opacity: 0.4; } 70% { opacity: 1; } to { transform: translateY(0); opacity: 1; } }
 @keyframes tileAppear { from { transform: scale(0) rotate(-10deg); opacity: 0; } 60% { transform: scale(1.15) rotate(2deg); opacity: 1; } to { transform: scale(1) rotate(0deg); opacity: 1; } }
-@keyframes tileMerge { 0% { transform: scale(1); } 40% { transform: scale(1.3); box-shadow: 0 0 25px rgba(255,215,0,0.5), 0 0 50px rgba(255,215,0,0.25); } 100% { transform: scale(1); } }
+@keyframes tileMerge { 0% { transform: scale(1); } 45% { transform: scale(1.35); box-shadow: 0 0 34px rgba(255,215,0,0.65), 0 0 74px rgba(255,215,0,0.33); } 100% { transform: scale(1); } }
 @keyframes tileDeselect { from { transform: scale(1.03); opacity: 1; } to { transform: scale(0.9); opacity: 0.6; } }
 @keyframes tileShake { 0%,100% { transform: translateX(0); } 15% { transform: translateX(-4px); } 30% { transform: translateX(4px); } 45% { transform: translateX(-3px); } 60% { transform: translateX(3px); } 75% { transform: translateX(-2px); } 90% { transform: translateX(2px); } }
 
@@ -918,7 +988,22 @@ function mountNumber(val) {
 @keyframes popupFadeIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes popupSlide { from { transform: translateY(40px) scale(0.95); opacity: 0; } to { transform: translateY(0) scale(1); opacity: 1; } }
 
+.floating-score-layer { position: fixed; inset: 0; pointer-events: none; z-index: 30; }
+.floating-score {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  color: #eaf5ff;
+  font-size: clamp(26px, 5.5vw, 44px);
+  font-weight: 900;
+  text-shadow: 0 2px 6px rgba(9,14,35,0.8), 0 0 18px rgba(255,218,98,0.6);
+  animation: floatScore .7s ease-out forwards;
+}
+@keyframes floatScore {
+  from { opacity: 0; transform: translate(-50%, -20%) scale(0.6); }
+  20% { opacity: 1; transform: translate(-50%, -65%) scale(1.18); }
+  to { opacity: 0; transform: translate(-50%, -180%) scale(1); }
+}
 /* Responsive */
-@media (max-width: 400px) { .game-container { padding: 4px; gap: 4px; } .board { padding: 3px; } .hud-item { padding: 4px 8px; } .hud-value { font-size: 14px; } .restart-btn, .sound-btn, .game-back-btn { width: 34px; height: 34px; } .board-row { gap: 3px; } .selection-svg { top: 3px; left: 3px; right: 3px; bottom: 3px; } .selection-glow-layer { stroke-width: 6; } .selection-path { stroke-width: 3; } .hud-topbar { gap: 4px; } }
+@media (max-width: 400px) { .game-container { padding: 4px; gap: 4px; } .board { padding: 5px; } .hud-item { padding: 4px 8px; } .hud-value { font-size: 14px; } .restart-btn, .sound-btn, .game-back-btn { width: 34px; height: 34px; } .board-row { gap: 5px; } .selection-svg { top: 5px; left: 5px; right: 5px; bottom: 5px; } .selection-glow-layer { stroke-width: 8; } .selection-path { stroke-width: 4; } .hud-topbar { gap: 4px; } }
 @media (min-width: 600px) { .game-container { max-width: 440px; gap: 8px; padding: 10px; } .board { padding: 6px; } .hud-value { font-size: 22px; } .restart-btn, .sound-btn, .game-back-btn { width: 48px; height: 48px; } .board-row { gap: 5px; } .selection-svg { top: 6px; left: 6px; right: 6px; bottom: 6px; } .selection-glow-layer { stroke-width: 12; } .selection-path { stroke-width: 5; } .hud-topbar { gap: 6px; } }
 </style>
